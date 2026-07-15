@@ -1,0 +1,61 @@
+# =========================================================
+# OSINT-X AI — Default Configuration
+# Copy this file to ~/.osintx/config.yaml to customize.
+# =========================================================
+
+general:
+  output_dir: "./exports"
+  cache_dir: "./cache"
+  log_dir: "./logs"
+  log_level: "INFO"          # DEBUG | INFO | WARNING | ERROR
+  threads: 8
+  timeout_seconds: 30
+  proxy: null                 # e.g. "socks5h://127.0.0.1:9050"
+
+ai:
+  provider: "ollama"          # gemini | groq | ollama
+  gemini:
+    api_key: "${GEMINI_API_KEY}"
+    model: "gemini-1.5-flash"
+  groq:
+    api_key: "${GROQ_API_KEY}"
+    model: "llama-3.1-70b-versatile"
+  ollama:
+    host: "http://localhost:11434"
+    model: "llama3.1"
+
+tools:
+  # Paths are auto-detected via `which`; override only if needed.
+  sherlock: null
+  maigret: null
+  theharvester: null
+  photon: null
+  spiderfoot: null
+  amass: null
+  subfinder: null
+  assetfinder: null
+  findomain: null
+  dnsrecon: null
+  dig: null
+  whois: null
+  nmap: null
+  naabu: null
+  httpx: null
+  katana: null
+  whatweb: null
+  exiftool: null
+  tesseract: null
+  socialscan: null
+  git: null
+  trufflehog: null
+  waybackurls: null
+  gau: null
+  dnsx: null
+
+reports:
+  formats: ["markdown", "json", "html"]   # add: pdf, docx, csv
+  include_raw_tool_output: true
+
+security:
+  allow_port_scanning: false   # must be explicitly enabled by the analyst
+  rate_limit_per_host_seconds: 1.0

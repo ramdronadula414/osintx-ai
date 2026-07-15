@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+exports/*
+!exports/.gitkeep
+cache/*
+!cache/.gitkeep
+logs/*
+!logs/.gitkeep
+*.egg-info/
+.pytest_cache/
+~/.osintx/
+.osintx/
