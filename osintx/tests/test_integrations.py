@@ -41,7 +41,7 @@ def test_domain_module_skips_gracefully_when_tools_missing():
         def path_for(self, name):
             return None
 
-    module = DomainModule(FakeRegistry())
+    module = DomainModule(FakeRegistry(), offline=True)
     investigation = Investigation(target_type="domain", target_value="example.com")
     module.run("example.com", investigation)
     # No tools available -> no crash, and helpful warnings/behavior (no tool_results added)

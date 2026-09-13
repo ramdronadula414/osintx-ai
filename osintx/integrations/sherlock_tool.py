@@ -1,44 +1,44 @@
 from __future__ import annotations
 
 import re
-
-from core.schema import Entity, EntityType, ToolResult
+from urllib.parse import urlsplit, unquote
+from core.schema import Entity, EntityType, ToolResult, ResultStatus
 from integrations.base import ToolIntegration
 from utils.shell import CommandResult
+from utils.validators import validate_username, validate_url, ValidationError
 
-_URL_RE = re.compile(r"https?://\S+")
+_FOUND = re.compile(r'^\[\+\]\s+([^:]+):\s+(https?://\S+)\s*$')
 
 
 class SherlockIntegration(ToolIntegration):
-    """Wraps the Sherlock project (public-profile username search across
-    hundreds of sites). Only ever queried with a username the analyst
-    supplied; never used to brute-force or guess identities."""
-    name = "sherlock"
+    name = 'sherlock'
 
     def build_argv(self, target: str, timeout: int = 10, **kwargs) -> list[str]:
-        return [
-            self.executable_path,
-            target,
-            "--timeout", str(timeout),
-            "--print-found",
-            "--no-color",
-        ]
+        return [self.executable_path, validate_username(target), '--timeout', str(timeout), '--print-found', '--no-color']
 
     def parse(self, target: str, result: CommandResult) -> ToolResult:
-        entities: list[Entity] = []
-        for line in (result.stdout or "").splitlines():
-            match = _URL_RE.search(line)
-            if match and ("found" in line.lower() or match):
-                url = match.group(0)
-                entities.append(Entity(
-                    type=EntityType.SOCIAL_ACCOUNT,
-                    value=url,
-                    source="sherlock",
-                    confidence=0.75,
-                    metadata={"username": target},
-                ))
-        return ToolResult(
-            tool=self.name, target=target, success=result.ok or bool(entities),
-            entities=entities, raw_output=result.stdout,
-            error=None if (result.ok or entities) else result.stderr,
-        )
+        if not result.ok:
+            return ToolResult.from_command(self.name, target, result)
+        entities = []
+        for line in result.stdout.splitlines():
+            match = _FOUND.fullmatch(line.strip())
+            if not match:
+                continue
+            try:
+                url = validate_url(match[2])
+            except ValidationError:
+                continue
+            parts = urlsplit(url)
+            path = unquote(parts.path).strip('/')
+            # Only a reported candidate, never proof from HTTP 200/403/429 or a redirect.
+            if not path or any(p.lower() in {'login', 'signin', 'error', 'challenge'} for p in path.split('/')):
+                continue
+            tokens = re.split(r'[/@?=&.]+', path + '?' + unquote(parts.query))
+            if target.casefold() not in [t.casefold() for t in tokens]:
+                continue
+            entities.append(Entity(EntityType.SOCIAL_ACCOUNT, url, self.name,
+                                   status=ResultStatus.UNVERIFIED, url=url, evidence=line.strip(),
+                                   metadata={'username': target, 'site': match[1]},
+                                   confidence_basis='Sherlock reported this candidate; account existence and identity require independent review'))
+        return ToolResult(self.name, target, True, entities=entities, raw_output=result.stdout,
+                          status=ResultStatus.UNVERIFIED if entities else ResultStatus.UNKNOWN)

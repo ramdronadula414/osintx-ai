@@ -16,7 +16,8 @@ Exactly one target-type flag is required per invocation:
 |---|---|
 | `--output-dir PATH` | Override the configured output directory for this run |
 | `--formats FMT,FMT` | Comma-separated subset of `markdown,json,csv,html,docx,pdf` |
-| `--no-ai` | Skip AI enrichment; report contains only collected facts |
+| `--no-ai` | Skip AI prioritization |
+| `--offline` | Skip network collection and AI; keep local image processing and search suggestions |
 | `--i-have-authorization` | Required to run nmap against an `--ip` target |
 
 ## Examples
@@ -32,8 +33,7 @@ LinkedIn) rather than scraping results directly.
 ```bash
 osintx investigate --username janedoe123
 ```
-Runs Sherlock (if installed) to find public profile URLs across
-supported sites.
+Runs Sherlock (if installed) and records candidate URLs as UNVERIFIED. A match does not prove account existence or identity. Maigret output remains diagnostic only.
 
 ### Email
 ```bash
@@ -54,23 +54,22 @@ crt.sh certificate-transparency plugin.
 ```bash
 osintx investigate --ip 203.0.113.10 --i-have-authorization
 ```
-Runs WHOIS/ASN lookup always; runs a conservative nmap scan (top 100
+Runs WHOIS/PTR for global addresses; skips public lookups for non-global addresses; runs a conservative nmap scan (top 100
 ports, service detection) only when `--i-have-authorization` is passed.
 
 ### Company
 ```bash
 osintx investigate --company "Example Corp"
 ```
-Looks up the company's public GitHub organization (repos + languages) and
-generates manual-review links (search engine, Crunchbase).
+Queries a GitHub organization-name candidate and generates search suggestions. Repository fields come from the API; the relationship between candidate and company remains UNVERIFIED. At most 30 repositories are returned.
 
 ### Image
 ```bash
 osintx investigate --image ./photo.jpg
 ```
-Extracts EXIF/GPS/camera metadata, runs OCR (if Tesseract installed),
+Extracts embedded metadata (Pillow fallback when ExifTool is absent), runs OCR (if Tesseract installed),
 decodes QR codes, computes a SHA-256 file hash, and generates a reverse
-image-search link template (upload manually — no scraping of search
+image-search suggestion (upload manually — no scraping of search
 providers).
 
 ## Reviewing past investigations
@@ -89,3 +88,7 @@ osintx update-tools
 
 Missing tools are skipped gracefully during investigations; install more
 of them following [docs/INSTALL.md](INSTALL.md) to increase coverage.
+
+Inspect available AI models with `osintx models --provider groq` (or `gemini` / `ollama`). See [CONFIGURATION.md](CONFIGURATION.md) for environment variables.
+
+Reports separate confirmed source observations, unverified candidates, suggestions, and per-source failures. Confidence is unassessed by default; it is never randomly assigned or increased by duplicate results. See the README for status definitions.

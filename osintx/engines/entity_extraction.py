@@ -24,11 +24,11 @@ def extract_entities(text: str, source: str) -> list[Entity]:
     entities: list[Entity] = []
     for etype, pattern in _PATTERNS.items():
         for match in set(pattern.findall(text)):
-            entities.append(Entity(type=etype, value=match, source=source, confidence=0.5))
+            entities.append(Entity(type=etype, value=match, source=source, confidence_basis="Unverified heuristic match in supplied text; does not establish existence or association"))
 
     lowered = text.lower()
     for keyword in _KNOWN_TECH_KEYWORDS:
-        if keyword in lowered:
-            entities.append(Entity(type=EntityType.TECHNOLOGY, value=keyword, source=source, confidence=0.5))
+        if re.search(r"(?<!\w)" + re.escape(keyword) + r"(?!\w)", lowered):
+            entities.append(Entity(type=EntityType.TECHNOLOGY, value=keyword, source=source, confidence_basis="Unverified heuristic match in supplied text; does not establish existence or association"))
 
     return entities

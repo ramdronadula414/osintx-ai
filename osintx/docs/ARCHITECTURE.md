@@ -58,10 +58,7 @@ osintx/
    dedupes/merges entities; `engines.timeline.build_timeline()` builds a
    chronological view; `engines.risk.compute_risk()` computes rule-based
    scores.
-5. If AI is enabled, `ai.engine.AIEngine.enrich()` sends only the
-   already-collected facts to the configured provider and fills in
-   `ai_summary`, `ai_technical_summary`, `ai_recommendations` — with a
-   system prompt that forbids inventing new facts.
+5. If AI is enabled, `ai.engine.AIEngine.enrich()` sends a structured evidence envelope. The provider returns only existing evidence IDs and predefined action IDs. The engine validates these and renders executive/technical sections from source evidence. Model prose is discarded; a prompt is not the enforcement boundary.
 6. `database.store.save_investigation()` persists the full investigation
    to SQLite.
 7. `reports.generator.generate_reports()` writes every configured format
@@ -83,3 +80,16 @@ osintx/
 - **AI is a summarizer, not a source**: the AI engine only ever receives
   facts already collected by modules/tools; its system prompt explicitly
   forbids introducing new claims not present in that input.
+
+## Reliability and evidence boundaries (1.1)
+
+- Orchestrator validates/normalizes the target before invoking any module; validation errors are not swallowed.
+- `ResultStatus` distinguishes evidence, absence, unknowns, errors, and deliberate skips. Failed `ToolResult` objects cannot contribute entities, even if a plugin supplies them.
+- `utils.shell` uses argv lists, process groups, a deadline, output caps, UTF-8 replacement decoding, and Ctrl+C cleanup. It never executes through a shell.
+- `utils.http` classifies API/network failures, rejects redirects/malformed JSON, caps bytes, and checks total elapsed time between bounded reads.
+- `modules.base` records missing tools and provides DNS fallback. Offline mode skips network steps explicitly.
+- `integrations/dns_python.py` uses bounded resolver lifetimes; `dig` parses complete typed DNS records. Source observations are not identity or ownership claims.
+- All report generators use the same evidence grouping semantics. Optional binary formats are imported lazily; failure of one format does not block others. Reports are written through temporary files to avoid claiming partial outputs succeeded.
+- `config/config.yaml` and bundled plugin sources are included in installed wheels. Core dependencies come from one requirements file.
+
+External drop-in Python plugins remain trusted local code. Their authors must honor timeout/resource bounds; discovery/runner errors are recorded but arbitrary plugin code is not sandboxed by the orchestrator.

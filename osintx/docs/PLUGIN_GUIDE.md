@@ -30,7 +30,7 @@ class MyPlugin(OsintxPlugin):
     def run(self, target: str, target_type: str, **kwargs) -> ToolResult:
         entities = [
             Entity(type=EntityType.SUBDOMAIN, value="found.example.com",
-                   source="my_plugin", confidence=0.7)
+                   source="my_plugin", status="UNVERIFIED", evidence="Actual source observation goes here")
         ]
         return ToolResult(tool="my_plugin", target=target, success=True,
                            entities=entities, raw_output="")
@@ -50,7 +50,7 @@ automatically by any module that calls `discover_plugins()` and checks
   string or use `shell=True`.
 - **Never raise from `run()`.** Catch your own exceptions and return a
   `ToolResult(success=False, error=str(exc))` instead; the orchestrator
-  will still record a warning, but a plugin exception should never crash
+  records a structured failed source result, so a plugin exception should never crash
   an investigation for the whole target.
 - **Respect rate limits.** Add your own delay/backoff if querying a public
   API repeatedly.
@@ -70,3 +70,5 @@ class MyCliPlugin(OsintxPlugin):
         result = run_command(["my-tool", "--target", target], timeout=30)
         # ... parse result.stdout into entities ...
 ```
+
+Provide `timeout` support in `run`, bound all network/process calls, and use `ResultStatus`. Never parse failed command output into entities. A `CONFIRMED` entity requires a concrete `evidence` field and confirms only the source observation. Search suggestions belong in `Investigation.suggestions`. No entity may use the AI as a discovery source.

@@ -1,59 +1,27 @@
 # Configuration Guide
 
-OSINT-X AI loads configuration in this order (later overrides earlier):
+Configuration overlays shipped `config/config.yaml` with `~/.osintx/config.yaml`. The Python loader also accepts an explicit extra path; the CLI does not currently expose `--config`.
 
-1. `config/config.yaml` (shipped defaults)
-2. `~/.osintx/config.yaml` (per-user overrides — created by `osintx config --init`)
-3. `--config <path>` if a command supports it
+`osintx config --init` creates a user configuration; `osintx config --show` prints resolved values with API keys masked. Missing/malformed files and invalid data types receive concise errors.
 
-## Sections
-
-### `general`
-| Key | Description |
+| Setting | Behavior |
 |---|---|
-| `output_dir` | Where reports are written by default |
-| `cache_dir` | Scratch space for cached tool output |
-| `log_dir` | Location of `osintx.log` / `osintx.jsonl` |
-| `log_level` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `threads` | Reserved for future parallel tool execution |
-| `timeout_seconds` | Per-tool subprocess timeout |
-| `proxy` | Optional SOCKS/HTTP proxy for outbound requests |
+| `general.output_dir` | Default report output directory; CLI `--output-dir` overrides it |
+| `general.log_dir`, `log_level` | Redacted logs; console logging continues if files cannot be written |
+| `general.timeout_seconds` | Per-tool/query time budget, 1–300 seconds; whole investigations can run multiple steps |
+| `general.threads`, `cache_dir`, `proxy` | Reserved; no parallel scheduler/cache/custom-proxy behavior is implemented |
+| `ai.provider` | `gemini`, `groq`, `ollama`; `OSINTX_AI_PROVIDER` overrides |
+| `ai.timeout_seconds` | AI HTTP request budget, 1–300 seconds |
+| `ai.gemini.model`, `ai.groq.model` | Explicit model IDs; `GEMINI_MODEL` / `GROQ_MODEL` override |
+| `ai.gemini.api_key`, `ai.groq.api_key` | Environment only; literal YAML credentials ignored |
+| `ai.ollama.host`, `ai.ollama.model` | Ollama API host and installed model name |
+| `tools` | Optional executable paths; `null` means PATH detection |
+| `reports.formats` | A nonempty subset of `markdown,json,csv,html,docx,pdf` |
+| `reports.include_raw_tool_output` | Include bounded diagnostic stdout in stored/exported JSON; false removes it before persistence |
+| `security.allow_port_scanning`, `rate_limit_per_host_seconds` | Legacy reserved settings; do not enable scanning or promise throttling |
 
-### `ai`
-| Key | Description |
-|---|---|
-| `provider` | `gemini`, `groq`, or `ollama` |
-| `gemini.api_key` / `groq.api_key` | Reference env vars like `${GEMINI_API_KEY}` |
-| `ollama.host` / `ollama.model` | Local Ollama server + model name |
+For HTTP proxies, use standard `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` environment variables. DNS and external tools manage their own network behavior. OSINT-X performs no automatic HTTP retries and never switches AI providers automatically.
 
-### `tools`
-Optional explicit paths per tool name, e.g.:
+Keys are read from `GROQ_API_KEY` and `GEMINI_API_KEY` (fallback `GOOGLE_API_KEY`). Model availability is checked against provider catalogues at runtime; `osintx models --provider ...` displays them. Groq's catalogue can include non-chat models, so choose a chat-compatible model. Unknown response shapes and unavailable models are reported as API errors.
 
-```yaml
-tools:
-  sherlock: /opt/sherlock/sherlock.py
-```
-
-Leave `null` for auto-detection via `PATH`.
-
-### `reports`
-| Key | Description |
-|---|---|
-| `formats` | Default formats generated when `--formats` isn't passed |
-| `include_raw_tool_output` | Whether raw stdout is embedded in JSON reports |
-
-### `security`
-| Key | Description |
-|---|---|
-| `allow_port_scanning` | Config-level default; the CLI still requires `--i-have-authorization` per run |
-| `rate_limit_per_host_seconds` | Minimum delay between requests to the same host |
-
-## Environment variables
-
-Any config value written as `${VAR_NAME}` is resolved from the process
-environment at load time:
-
-```bash
-export GEMINI_API_KEY="sk-..."
-export GROQ_API_KEY="gsk-..."
-```
+Cloud AI receives at most 100 confirmed and 100 unverified observations, with a 150,000-byte evidence budget. Larger evidence sets still remain in local reports. Free-form model text cannot be promoted to discoveries: the model must return valid evidence/action IDs.
