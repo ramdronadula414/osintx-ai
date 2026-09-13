@@ -40,9 +40,10 @@ class OsintxPlugin(ABC):
         """Execute the plugin against `target` and return a normalized ToolResult."""
 
 
-def discover_plugins() -> list[OsintxPlugin]:
+def discover_plugins(warnings: list[str] | None = None) -> list[OsintxPlugin]:
     """Import every .py file under plugins/installed/ and instantiate any
     OsintxPlugin subclasses found inside."""
+    warnings = warnings if warnings is not None else []
     plugins: list[OsintxPlugin] = []
     if not INSTALLED_DIR.exists():
         return plugins
@@ -58,7 +59,9 @@ def discover_plugins() -> list[OsintxPlugin]:
         try:
             sys.modules[module_name] = module
             spec.loader.exec_module(module)
-        except Exception:
+        except Exception as exc:
+            warnings.append(f"Plugin {py_file.name} could not load ({type(exc).__name__})")
+            sys.modules.pop(module_name, None)
             continue
 
         for attr_name in dir(module):
@@ -70,7 +73,7 @@ def discover_plugins() -> list[OsintxPlugin]:
             ):
                 try:
                     plugins.append(attr())
-                except Exception:
-                    continue
+                except Exception as exc:
+                    warnings.append(f"Plugin {py_file.name} could not initialize ({type(exc).__name__})")
 
     return plugins

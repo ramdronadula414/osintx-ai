@@ -1,104 +1,80 @@
 # Installation Guide
 
-## 1. Requirements
+## Python application
 
-- Kali Linux 2025+, Ubuntu 24.04+, or another Debian-based distribution
-- Python 3.11+
-- `pip`, `git`
-
-## 2. Install OSINT-X AI
+Use Python 3.10+ on Linux. Create a virtual environment to avoid Debian/Kali system-Python package restrictions.
 
 ```bash
-git clone <this-repo> osintx
-cd osintx
+git clone https://github.com/ramdronadula414/osintx-ai.git
+cd osintx-ai/osintx
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-```
-
-Verify:
-
-```bash
+python -m pip install -r requirements.txt
+python -m pip install -e .
+osintx --help
 osintx version
 ```
 
-## 3. Install underlying Linux OSINT tools (optional but recommended)
+`requirements.txt` is the single source of core Python dependencies, also used by `pyproject.toml`. System OSINT binaries are not pip dependencies.
 
-OSINT-X AI auto-detects each tool via `PATH` and skips anything not
-installed — you don't need all of these to get started, but coverage
-improves as you add more.
+Optional features:
 
-### Kali Linux
-Most tools ship in Kali's repositories already:
+```bash
+python -m pip install -e ".[reports]"  # PDF and DOCX
+python -m pip install -e ".[qr]"       # barcode decoding (requires libzbar0 below)
+python -m pip install -e ".[dev,reports,qr]"
+python -m pytest -q
+```
+
+## Optional Linux tools
+
+Install only the tools you need; missing tools are recorded and do not stop the investigation. For Debian-family distributions:
 
 ```bash
 sudo apt update
-sudo apt install -y whois dnsutils nmap exiftool tesseract-ocr \
-    theharvester amass whatweb git
+sudo apt install whois dnsutils nmap libimage-exiftool-perl tesseract-ocr libzbar0 fonts-dejavu-core
 ```
 
-### Ubuntu / Debian
+Sherlock and theHarvester are separate applications. Install them using their official instructions or Kali packages, then verify their own `--help` and `osintx update-tools`. Prefer `pipx` for separate Python CLI tools rather than mixing their dependencies into OSINT-X's environment.
 
-```bash
-sudo apt update
-sudo apt install -y whois dnsutils nmap libimage-exiftool-perl \
-    tesseract-ocr git
-```
+- Sherlock: https://sherlockproject.xyz/installation
+- theHarvester: https://github.com/laramies/theHarvester
+- ExifTool: https://exiftool.org/
 
-### Python/pip-based tools
+Detection-only entries such as amass, subfinder, httpx, dnsrecon, masscan and yt-dlp do not have collection wrappers in this release. A found executable is not a guarantee of compatible version or successful execution. Configure explicit executable paths under `tools` when necessary. The `theHarvester` and legacy lowercase `theharvester` keys are both accepted.
 
-```bash
-pip install sherlock-project socialscan
-```
-
-### Go-based tools (subfinder, assetfinder, httpx, katana, naabu, dnsx, waybackurls, gau)
-
-Requires Go 1.21+:
-
-```bash
-go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-go install github.com/tomnomnom/assetfinder@latest
-go install github.com/projectdiscovery/httpx/cmd/httpx@latest
-go install github.com/projectdiscovery/katana/cmd/katana@latest
-go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest
-go install github.com/projectdiscovery/dnsx/cmd/dnsx@latest
-go install github.com/tomnomnom/waybackurls@latest
-go install github.com/lc/gau/v2/cmd/gau@latest
-export PATH="$PATH:$(go env GOPATH)/bin"
-```
-
-### Maigret, TruffleHog, SpiderFoot, Photon, Findomain, dnsrecon
-
-```bash
-pip install maigret
-pip install trufflehog3   # or the official trufflehog release binary
-git clone https://github.com/smicallef/spiderfoot.git
-git clone https://github.com/s0md3v/Photon.git
-# Findomain: download the release binary for your platform from GitHub releases
-pip install dnsrecon
-```
-
-After installing any tools, re-run:
-
-```bash
-osintx update-tools
-```
-
-to confirm detection.
-
-## 4. Configure AI provider
+## AI configuration
 
 ```bash
 osintx config --init
-$EDITOR ~/.osintx/config.yaml
+export OSINTX_AI_PROVIDER=groq
+export GROQ_API_KEY="<your key>"
+osintx models --provider groq
+export GROQ_MODEL="<an available chat model ID>"
 ```
 
-Set `ai.provider` to `gemini`, `groq`, or `ollama`, and provide the
-relevant API key via environment variable (see README).
+For Gemini, use `GEMINI_API_KEY` or `GOOGLE_API_KEY` and `GEMINI_MODEL`. For local Ollama, start the server, pull a model, and configure `ai.ollama.model`; `osintx models --provider ollama` lists installed names. Availability depends on your account/server. No paid generation is performed by the model-list command.
 
-## 5. (Optional) Enable port scanning
+Never commit keys. Literal YAML API keys are ignored; use the environment. `--no-ai` skips AI; `--offline` also skips all network collection.
 
-Port scanning (`nmap`) is disabled unless you explicitly authorize it per
-run, via `--i-have-authorization`, and only against targets you own or are
-contractually authorized to test.
+## Troubleshooting
+
+| Symptom | Action |
+|---|---|
+| `externally-managed-environment` | Use the virtual environment; do not modify the system Python |
+| Missing import / command | Activate the environment and run `python -m pip install -e .` from `osintx-ai/osintx` |
+| `TOOL UNAVAILABLE` | Install that optional executable or use available fallback modules |
+| Tool status `FAILED` | Check the configured path is a regular executable and has execute permission |
+| AI `PERMISSION ERROR` | Check environment key and provider/account permissions; 401/403 are not missing findings |
+| AI model unavailable | List models, select a supported chat/generation model, update model configuration |
+| `RATE LIMITED` | Wait for the source limit to reset; the app does not retry automatically |
+| `NETWORK ERROR` / `TIMEOUT` | Check network/DNS/proxy; use `--offline` for local processing |
+| Empty response `UNKNOWN` | Source output was insufficient; do not interpret it as absence |
+| Report write error | Choose a writable `--output-dir`; results remain printed in the terminal |
+| PDF/DOCX unavailable | Install `.[reports]`; JSON/Markdown/HTML/CSV continue independently |
+| QR unavailable | Install `.[qr]` and `libzbar0`; EXIF/OCR/hash can still run |
+| Non-Latin glyphs missing in PDF | Prefer HTML/DOCX/JSON for scripts unsupported by the installed PDF font |
+
+Subprocesses have a configurable time budget and a 1 MiB combined stdout/stderr cap. Exceeding either discards findings from that command. HTTP JSON bodies are capped at 2 MiB. Images are capped at 100 MiB and Pillow's decompression-bomb checks apply. These limits favor controlled failure over unbounded resource use.
+
+No active scan is run without `--i-have-authorization` on that invocation, even if the old reserved configuration flag is set.

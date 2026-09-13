@@ -1,53 +1,37 @@
 from __future__ import annotations
 
 import json
-
-from core.schema import Entity, EntityType, ToolResult
+from core.schema import Entity, EntityType, ToolResult, ResultStatus
 from integrations.base import ToolIntegration
 from utils.shell import CommandResult
+from utils.validators import validate_image
 
 
 class ExifToolIntegration(ToolIntegration):
-    """Wraps ExifTool for EXIF/GPS/camera metadata extraction from images
-    the analyst has locally — never fetched from a remote profile."""
-    name = "exiftool"
+    name = 'exiftool'
 
     def build_argv(self, target: str, **kwargs) -> list[str]:
-        return [self.executable_path, "-j", "-n", target]
+        return [self.executable_path, '-j', '-n', '-G1', '--', validate_image(target)]
 
     def parse(self, target: str, result: CommandResult) -> ToolResult:
-        entities: list[Entity] = []
-        raw = result.stdout or ""
+        if not result.ok:
+            return ToolResult.from_command(self.name, target, result)
         try:
-            data = json.loads(raw)
-            record = data[0] if data else {}
-        except (json.JSONDecodeError, IndexError):
-            record = {}
-
-        gps_lat = record.get("GPSLatitude")
-        gps_lon = record.get("GPSLongitude")
-        if gps_lat is not None and gps_lon is not None:
-            entities.append(Entity(
-                type=EntityType.URL,
-                value=f"https://www.google.com/maps?q={gps_lat},{gps_lon}",
-                source="exiftool",
-                confidence=0.9,
-                metadata={"kind": "gps_location", "lat": gps_lat, "lon": gps_lon},
-            ))
-
-        camera_make = record.get("Make")
-        camera_model = record.get("Model")
-        if camera_make or camera_model:
-            entities.append(Entity(
-                type=EntityType.TECHNOLOGY,
-                value=f"{camera_make or ''} {camera_model or ''}".strip(),
-                source="exiftool",
-                confidence=0.9,
-                metadata={"kind": "camera"},
-            ))
-
-        return ToolResult(
-            tool=self.name, target=target, success=result.ok,
-            entities=entities, raw_output=raw[:20000],
-            error=None if result.ok else result.stderr,
-        )
+            data = json.loads(result.stdout)
+            if not isinstance(data, list) or len(data) != 1 or not isinstance(data[0], dict):
+                raise ValueError
+            record = data[0]
+            if any(k.split(':')[-1] == 'Error' for k in record):
+                raise ValueError
+        except (ValueError, TypeError):
+            return ToolResult(self.name, target, False, raw_output=result.stdout, status=ResultStatus.ERROR, error='Invalid ExifTool JSON or file error')
+        entities = []
+        for key, value in record.items():
+            if key == 'SourceFile' or key.startswith(('System:', 'File:', 'ExifTool:')):
+                continue
+            entities.append(Entity(EntityType.METADATA, json.dumps(value, ensure_ascii=False), self.name,
+                                   status=ResultStatus.CONFIRMED, evidence=f'{key}: {value}',
+                                   metadata={'kind': key, 'target': target, 'origin': 'computed' if key.startswith('Composite:') else 'embedded'},
+                                   confidence_basis='Metadata value extracted from this file; authenticity, capture date, and actual location are not verified'))
+        return ToolResult(self.name, target, True, entities=entities, raw_output=result.stdout,
+                          status=ResultStatus.FOUND if entities else ResultStatus.NOT_FOUND)

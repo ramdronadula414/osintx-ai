@@ -1,82 +1,74 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
-
-from core.schema import Entity, EntityType, Investigation, ToolResult
-from integrations.registry import get_integration
+import json
+import warnings
+from PIL import Image, ExifTags, UnidentifiedImageError
+from core.schema import Entity, EntityType, Investigation, ToolResult, ResultStatus
 from modules.base import InvestigationModule
-from utils.logger import get_logger
-
-log = get_logger(__name__)
+from utils.shell import run_command
+from utils.validators import validate_image
 
 
 class ImageModule(InvestigationModule):
-    target_type = "image"
+    target_type = 'image'
 
     def run(self, target: str, investigation: Investigation, **kwargs) -> None:
-        image_path = Path(target)
-        if not image_path.exists():
-            investigation.warnings.append(f"Image file not found: {target}")
+        target = validate_image(target)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error', Image.DecompressionBombWarning)
+                with Image.open(target) as image:
+                    image.verify()
+                with Image.open(target) as image:
+                    metadata = dict(image.getexif())
+                    if not self.tool_registry.is_available('exiftool'):
+                        entities = [Entity(EntityType.METADATA, json.dumps(value, default=str, ensure_ascii=False), 'Pillow',
+                                           status=ResultStatus.CONFIRMED, evidence=f'{ExifTags.TAGS.get(key, key)}: {value}',
+                                           metadata={'kind': str(ExifTags.TAGS.get(key, key)), 'target': target, 'origin': 'embedded'},
+                                           confidence_basis='Embedded EXIF field; authenticity and real-world interpretation unverified')
+                                    for key, value in metadata.items()]
+                        investigation.add_tool_result(ToolResult('Pillow:EXIF', target, True, entities=entities,
+                                                               status=ResultStatus.FOUND if entities else ResultStatus.NOT_FOUND))
+                    self._qr(image, target, investigation)
+        except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+            investigation.add_tool_result(ToolResult('image', target, False,
+                                                   status=ResultStatus.PERMISSION_ERROR if isinstance(exc, PermissionError) else ResultStatus.ERROR,
+                                                   error=f'Unable to process image ({type(exc).__name__})'))
             return
-
-        # EXIF / GPS / camera metadata
-        if self.tool_registry.is_available("exiftool"):
-            exiftool = get_integration("exiftool", self.tool_registry.path_for("exiftool"), self.timeout)
-            investigation.add_tool_result(exiftool.run(str(image_path)))
+        self.run_tool('exiftool', target, investigation, local=True)
+        if self.tool_registry.is_available('tesseract'):
+            result = run_command([self.tool_registry.path_for('tesseract'), target, 'stdout'], timeout=self.timeout)
+            entities = [Entity(EntityType.TEXT, result.stdout.strip(), 'tesseract', status=ResultStatus.UNVERIFIED,
+                               evidence='OCR transcription; manually compare with the image', confidence_basis='OCR may misread characters')] if result.ok and result.stdout.strip() else []
+            investigation.add_tool_result(ToolResult.from_command('tesseract', target, result, entities))
         else:
-            log.warning("exiftool not installed — skipping EXIF extraction for %s", target)
-
-        # OCR via tesseract
-        if self.tool_registry.is_available("tesseract"):
-            from utils.shell import run_command
-            argv = [self.tool_registry.path_for("tesseract"), str(image_path), "stdout"]
-            result = run_command(argv, timeout=self.timeout)
-            text = (result.stdout or "").strip()
-            entities = []
-            if text:
-                entities.append(Entity(
-                    type=EntityType.URL, value="[ocr_text_extracted]", source="tesseract",
-                    confidence=0.5, metadata={"ocr_text": text[:5000]},
-                ))
-            investigation.add_tool_result(ToolResult(
-                tool="tesseract", target=target, success=result.ok,
-                entities=entities, raw_output=text[:5000],
-                error=None if result.ok else result.stderr,
-            ))
-
-        # QR code decoding
+            investigation.add_tool_result(ToolResult('tesseract', target, False, status=ResultStatus.TOOL_UNAVAILABLE, error='Optional OCR executable not installed'))
         try:
-            from PIL import Image
-            from pyzbar.pyzbar import decode as qr_decode
-
-            img = Image.open(image_path)
-            decoded = qr_decode(img)
-            qr_entities = [
-                Entity(type=EntityType.URL, value=d.data.decode("utf-8", errors="replace"),
-                       source="pyzbar", confidence=0.9, metadata={"kind": "qr_code"})
-                for d in decoded
-            ]
-            investigation.add_tool_result(ToolResult(
-                tool="pyzbar", target=target, success=True, entities=qr_entities, raw_output="",
-            ))
-        except Exception as exc:  # noqa: BLE001
-            investigation.warnings.append(f"QR decoding skipped: {exc}")
-
-        # Perceptual/cryptographic hash for identity/dedup tracking
-        try:
-            data = image_path.read_bytes()
-            sha256 = hashlib.sha256(data).hexdigest()
-            investigation.entities.append(Entity(
-                type=EntityType.TECHNOLOGY, value=f"sha256:{sha256}", source="hashing",
-                confidence=1.0, metadata={"kind": "file_hash"},
-            ))
+            digest = hashlib.sha256()
+            with open(target, 'rb') as stream:
+                for chunk in iter(lambda: stream.read(65536), b''):
+                    digest.update(chunk)
+            investigation.add_tool_result(ToolResult('hashing', target, True, entities=[
+                Entity(EntityType.FILE_HASH, digest.hexdigest(), 'hashing', status=ResultStatus.CONFIRMED,
+                       evidence='SHA-256 computed from local file bytes', metadata={'kind': 'sha256', 'target': target},
+                       confidence_basis='Deterministic local file hash')]))
         except OSError as exc:
-            investigation.warnings.append(f"Hashing failed: {exc}")
+            investigation.add_tool_result(ToolResult('hashing', target, False, status=ResultStatus.PERMISSION_ERROR if isinstance(exc, PermissionError) else ResultStatus.ERROR, error='Unable to read file for hashing'))
+        investigation.add_suggestion('Reverse image search: upload manually', 'https://images.google.com/')
+        investigation.warnings.append('Metadata may be edited or stale. GPS fields do not verify a real location. No face identification is performed.')
 
-        # Reverse image search links (generated, not scraped)
-        investigation.entities.append(Entity(
-            type=EntityType.URL, value="https://images.google.com/searchbyimage?image_url=<upload_manually>",
-            source="image_module", confidence=0.2,
-            metadata={"kind": "manual_reverse_search", "note": "Upload the image manually; no scraping performed."},
-        ))
+    def _qr(self, image, target, investigation):
+        try:
+            from pyzbar.pyzbar import decode
+        except (ImportError, OSError):
+            investigation.add_tool_result(ToolResult('pyzbar', target, False, status=ResultStatus.TOOL_UNAVAILABLE, error='Optional pyzbar/libzbar dependency unavailable'))
+            return
+        try:
+            decoded = decode(image)
+            entities = [Entity(EntityType.TEXT, item.data.decode('utf-8', errors='replace'), 'pyzbar',
+                               status=ResultStatus.UNVERIFIED, evidence='Barcode decoded from supplied image',
+                               metadata={'kind': 'barcode'}, confidence_basis='Decoded text; authenticity and any linked destination are unverified') for item in decoded]
+            investigation.add_tool_result(ToolResult('pyzbar', target, True, entities=entities, status=ResultStatus.UNVERIFIED if entities else ResultStatus.NOT_FOUND))
+        except Exception as exc:  # Optional native decoder failure must not suppress hashing/EXIF.
+            investigation.add_tool_result(ToolResult('pyzbar', target, False, error=f'Barcode decoder failed ({type(exc).__name__})'))

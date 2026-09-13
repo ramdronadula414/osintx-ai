@@ -12,3 +12,11 @@ logs/*
 .pytest_cache/
 ~/.osintx/
 .osintx/
+
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+build/
+dist/

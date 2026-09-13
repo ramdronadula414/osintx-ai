@@ -3,7 +3,7 @@ entities and tool results (e.g. domain creation date, EXIF capture date,
 certificate issuance date)."""
 from __future__ import annotations
 
-from core.schema import Entity, TimelineEvent, ToolResult
+from core.schema import Entity, TimelineEvent, ToolResult, ResultStatus
 
 _TIMESTAMP_METADATA_KEYS = [
     "creation_date", "expiration_date", "issued_date", "captured_at", "first_seen",
@@ -14,6 +14,8 @@ def build_timeline(entities: list[Entity], tool_results: list[ToolResult]) -> li
     events: list[TimelineEvent] = []
 
     for entity in entities:
+        if entity.status != ResultStatus.CONFIRMED:
+            continue
         if entity.first_seen:
             events.append(TimelineEvent(
                 timestamp=entity.first_seen,
@@ -34,7 +36,7 @@ def build_timeline(entities: list[Entity], tool_results: list[ToolResult]) -> li
     for tr in tool_results:
         events.append(TimelineEvent(
             timestamp=tr.started_at,
-            description=f"Ran {tr.tool} against '{tr.target}' ({'success' if tr.success else 'failed'})",
+            description=f"Ran {tr.tool} against '{tr.target}' ({tr.status.value})",
             source=tr.tool,
         ))
 

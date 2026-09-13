@@ -38,6 +38,14 @@ class ToolIntegration(ABC):
         start = time.monotonic()
         argv = self.build_argv(target, **kwargs)
         cmd_result = run_command(argv, timeout=self.timeout)
-        tool_result = self.parse(target, cmd_result)
+        if not cmd_result.ok:
+            tool_result = ToolResult.from_command(self.name, target, cmd_result)
+        else:
+            try:
+                tool_result = self.parse(target, cmd_result)
+            except (ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
+                tool_result = ToolResult(self.name, target, False, raw_output=cmd_result.stdout,
+                                         error=f"Malformed tool output ({type(exc).__name__})")
+        tool_result.raw_stderr = cmd_result.stderr
         tool_result.duration_seconds = round(time.monotonic() - start, 3)
         return tool_result

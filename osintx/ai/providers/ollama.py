@@ -1,44 +1,38 @@
 from __future__ import annotations
 
-import requests
-
+from urllib.parse import urlsplit
 from ai.provider import AIProvider, AIProviderError
 
 
 class OllamaProvider(AIProvider):
-    """Local/offline provider — talks to a locally running Ollama server.
-    Preferred for investigations where no data should leave the analyst's
-    machine."""
-    name = "ollama"
+    name = 'ollama'
 
-    def __init__(self, host: str = "http://localhost:11434", model: str = "llama3.1"):
-        self.host = host.rstrip("/")
-        self.model = model
+    def __init__(self, host: str = 'http://localhost:11434', model: str = 'llama3.1', timeout: float = 30):
+        self.host, self.model, self.timeout = host.rstrip('/'), model, timeout
+        try:
+            parsed = urlsplit(self.host)
+            parsed.port
+        except ValueError as exc:
+            raise AIProviderError("Invalid Ollama host URL") from exc
+        if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise AIProviderError('Invalid Ollama host URL')
 
     def is_configured(self) -> bool:
-        try:
-            resp = requests.get(f"{self.host}/api/tags", timeout=3)
-            return resp.status_code == 200
-        except requests.RequestException:
-            return False
+        return bool(self.host)
+
+    def list_models(self) -> list[str]:
+        data = self.request('GET', self.host + '/api/tags')
+        if not isinstance(data, dict) or not isinstance(data.get('models'), list) or any(not isinstance(m, dict) or not isinstance(m.get('name'), str) for m in data['models']):
+            raise AIProviderError('Malformed Ollama model list')
+        names = [m['name'] for m in data['models']]
+        return list(dict.fromkeys(names + [name.removesuffix(':latest') for name in names if name.endswith(':latest')]))
 
     def complete(self, system_prompt: str, user_prompt: str, max_tokens: int = 1024) -> str:
-        payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "stream": False,
-            "options": {"num_predict": max_tokens, "temperature": 0.2},
-        }
+        self.require_model()
+        data = self.request('POST', self.host + '/api/chat', json={
+            'model': self.model, 'messages': [{'role': 'system', 'content': system_prompt}, {'role': 'user', 'content': user_prompt}],
+            'stream': False, 'options': {'num_predict': max_tokens, 'temperature': 0}})
         try:
-            resp = requests.post(f"{self.host}/api/chat", json=payload, timeout=60)
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("message", {}).get("content", "").strip()
-        except requests.RequestException as exc:
-            raise AIProviderError(
-                f"Ollama request failed ({exc}). Is `ollama serve` running and is "
-                f"'{self.model}' pulled?"
-            ) from exc
+            return self.text_response(data['message']['content'])
+        except (TypeError, KeyError) as exc:
+            raise AIProviderError('Malformed Ollama completion') from exc

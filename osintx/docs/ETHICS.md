@@ -29,9 +29,7 @@ journalists, researchers, and students learning OSINT methodology.
 - **No search-engine scraping.** Person/company search generates
   manual-review search URLs instead of scraping search-result pages,
   respecting each platform's terms of service.
-- **No fact fabrication.** The AI engine's system prompt explicitly
-  forbids stating anything not present in the already-collected data, and
-  requires it to flag uncertain/inferred conclusions as such.
+- **No fact fabrication.** The AI engine only accepts existing evidence IDs and predefined action IDs. It renders summaries from source observations and rejects model-generated claims or unknown references. This does not guarantee that external sources themselves are truthful.
 
 ## Your responsibility as the operator
 

@@ -1,51 +1,49 @@
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
-
 from core.schema import Investigation
-from reports.data_report import generate_csv, generate_json
-from reports.docx_report import generate_docx
-from reports.html_report import generate_html
-from reports.markdown_report import generate_markdown
-from reports.pdf_report import generate_pdf
+from utils.validators import ValidationError
+
+GENERATORS = {'markdown': ('markdown_report', 'generate_markdown', 'md'),
+              'json': ('data_report', 'generate_json', 'json'), 'csv': ('data_report', 'generate_csv', 'csv'),
+              'html': ('html_report', 'generate_html', 'html'), 'docx': ('docx_report', 'generate_docx', 'docx'),
+              'pdf': ('pdf_report', 'generate_pdf', 'pdf')}
+
+
+def validate_formats(formats: list[str]) -> list[str]:
+    values = list(dict.fromkeys(f.strip().lower() for f in formats))
+    if not values or any(value not in GENERATORS for value in values):
+        raise ValidationError('Report formats must be a nonempty subset of markdown,json,csv,html,docx,pdf')
+    return values
 
 
 def generate_reports(investigation: Investigation, output_dir: str, formats: list[str]) -> dict[str, str]:
-    """Write every requested format to output_dir and return a dict of
-    {format: file_path}."""
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    base_name = f"osintx_{investigation.target_type}_{investigation.id}"
-    written: dict[str, str] = {}
-
-    if "markdown" in formats:
-        path = out_dir / f"{base_name}.md"
-        path.write_text(generate_markdown(investigation))
-        written["markdown"] = str(path)
-
-    if "json" in formats:
-        path = out_dir / f"{base_name}.json"
-        path.write_text(generate_json(investigation))
-        written["json"] = str(path)
-
-    if "csv" in formats:
-        path = out_dir / f"{base_name}.csv"
-        path.write_text(generate_csv(investigation))
-        written["csv"] = str(path)
-
-    if "html" in formats:
-        path = out_dir / f"{base_name}.html"
-        path.write_text(generate_html(investigation))
-        written["html"] = str(path)
-
-    if "docx" in formats:
-        path = out_dir / f"{base_name}.docx"
-        generate_docx(investigation, str(path))
-        written["docx"] = str(path)
-
-    if "pdf" in formats:
-        path = out_dir / f"{base_name}.pdf"
-        generate_pdf(investigation, str(path))
-        written["pdf"] = str(path)
-
+    formats = validate_formats(formats)
+    out_dir = Path(output_dir).expanduser()
+    written = {}
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        investigation.warnings.append(f'Reports unavailable: cannot create output directory ({type(exc).__name__})')
+        return written
+    # Render JSON last so it captures failures in any other report format.
+    for fmt in sorted(formats, key=lambda item: item == 'json'):
+        module, function, ext = GENERATORS[fmt]
+        path = out_dir / f'osintx_{investigation.target_type}_{investigation.id}.{ext}'
+        temp = path.with_suffix(path.suffix + '.tmp')
+        try:
+            generate = getattr(importlib.import_module('reports.' + module), function)
+            if fmt in ('docx', 'pdf'):
+                generate(investigation, str(temp))
+            else:
+                temp.write_text(generate(investigation), encoding='utf-8')
+            temp.replace(path)
+            written[fmt] = str(path)
+        except Exception as exc:  # Independent optional renderer boundary; preserve all other formats.
+            investigation.warnings.append(f'{fmt} report failed ({type(exc).__name__}); check optional dependency and output permissions')
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                investigation.warnings.append(f'Could not remove partial {fmt} report')
     return written

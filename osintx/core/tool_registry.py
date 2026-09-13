@@ -12,7 +12,7 @@ SUPPORTED_TOOLS = [
     "amass", "subfinder", "assetfinder", "findomain", "dnsrecon",
     "dig", "whois", "nmap", "naabu", "httpx", "katana", "whatweb",
     "exiftool", "tesseract", "socialscan", "git", "trufflehog",
-    "waybackurls", "gau", "dnsx",
+    "waybackurls", "gau", "dnsx", "nslookup", "masscan", "jq", "python3", "yt-dlp",
 ]
 
 
@@ -21,6 +21,8 @@ class ToolStatus:
     name: str
     available: bool
     path: str | None
+    state: str = "NOT INSTALLED"
+    integrated: bool = False
 
 
 class ToolRegistry:
@@ -31,9 +33,11 @@ class ToolRegistry:
 
     def _detect_all(self):
         for name in SUPPORTED_TOOLS:
-            configured = self.configured_paths.get(name)
+            configured = self.configured_paths.get(name, self.configured_paths.get(name.lower()))
             path = resolve_tool_path(name, configured)
-            self._status[name] = ToolStatus(name=name, available=path is not None, path=path)
+            self._status[name] = ToolStatus(name=name, available=path is not None, path=path,
+                                            state='AVAILABLE' if path else 'FAILED' if configured else 'NOT INSTALLED',
+                                            integrated=name in {'whois', 'dig', 'sherlock', 'theHarvester', 'nmap', 'exiftool', 'maigret', 'tesseract'})
 
     def is_available(self, name: str) -> bool:
         status = self._status.get(name)
@@ -50,5 +54,5 @@ class ToolRegistry:
         return [n for n, s in self._status.items() if not s.available]
 
     def summary_table_rows(self) -> list[tuple[str, str]]:
-        return [(name, "✅ found" if s.available else "❌ not installed")
+        return [(name, s.state + (" (detection only; NOT REQUIRED)" if not s.integrated else ""))
                 for name, s in sorted(self._status.items())]
